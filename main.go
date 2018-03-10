@@ -45,9 +45,10 @@ func main() {
 	useHTTPS := flag.Bool("https", false, "Use HTTPS")
 	cert := flag.String("cert", "cert.pem", "Path to the cert file (https = true)")
 	key := flag.String("key", "key.pem", "Path to the private key (https = true)")
+	host := flag.String("host", "test.loc", "Hostname for the clients")
 	flag.Parse()
 	r := mux.NewRouter()
-	s := r.Host("{subdomain:[a-z0-9]+}.test.loc").Subrouter()
+	s := r.Host(fmt.Sprintf("{subdomain:[a-z0-9]+}.%v", *host)).Subrouter()
 	s.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		vars := mux.Vars(r)
 		if cl, ok := clients[vars["subdomain"]]; ok {
@@ -135,10 +136,10 @@ func main() {
 		}
 	}()
 	if *useHTTPS {
-		log.Printf("Listening at: https://%v", *serverAddr)
+		log.Printf("Listening at: https://%v (%v)", *host, *serverAddr)
 		http.ListenAndServeTLS(*serverAddr, *cert, *key, r)
 	} else {
-		log.Printf("Listening at: http://%v", *serverAddr)
+		log.Printf("Listening at: http://%v (%v)", *host, *serverAddr)
 		http.ListenAndServe(*serverAddr, r)
 	}
 }
