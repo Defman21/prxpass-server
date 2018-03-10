@@ -124,6 +124,10 @@ func main() {
 							cidi := string(cid[1])
 							log.Printf("A client requested a custom ID: %v", cidi)
 							if *customIDs {
+								if _, exists := clients[cidi]; exists {
+									log.Printf("Change request rejected (already in use)")
+									continue
+								}
 								clients[cidi] = cl
 								log.Printf("Changed %v to %v", id, cidi)
 								cl.changeID <- cidi
