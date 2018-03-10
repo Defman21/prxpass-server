@@ -51,7 +51,7 @@ func main() {
 	flag.Parse()
 	r := mux.NewRouter()
 	s := r.Host(fmt.Sprintf("{subdomain:[a-z0-9]+}.%v", *host)).Subrouter()
-	s.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+	s.HandleFunc("/{url:.*}", func(w http.ResponseWriter, r *http.Request) {
 		vars := mux.Vars(r)
 		if cl, ok := clients[vars["subdomain"]]; ok {
 			dump, _ := httputil.DumpRequest(r, true)
@@ -68,6 +68,7 @@ func main() {
 					for k, _ := range resp.Header {
 						w.Header().Set(k, resp.Header.Get(k))
 					}
+					w.WriteHeader(resp.StatusCode)
 					w.Write(body)
 					return
 				}
