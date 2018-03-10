@@ -1,94 +1,135 @@
 package main
 
 import (
-    "log"
-    "net"
-    "net/http"
-    "net/http/httputil"
-    "bytes"
-    "io/ioutil"
-    "bufio"
-    "github.com/gorilla/mux"
-    "flag"
+	"bufio"
+	"bytes"
+	"flag"
+	"fmt"
+	"github.com/gorilla/mux"
+	"io/ioutil"
+	"log"
+	"math/rand"
+	"net"
+	"net/http"
+	"net/http/httputil"
 )
 
-func main() {
-    clientAddr := flag.String("client", ":30303", "Client address")
-    serverAddr := flag.String("server", ":4444", "Server address")
-    flag.Parse()
-    r := mux.NewRouter()
-    request  := make(chan []byte)
-    response := make(chan []byte)
-    r.HandleFunc("/{msg}", func (w http.ResponseWriter, r *http.Request) {
-        dump, _ := httputil.DumpRequest(r, true)
-        go func() {
-            log.Println("Sending the request to the channel")
-            request <- dump
-        }()
-        for {
-            select {
-            case data := <-response:
-                reader := bufio.NewReader(bytes.NewReader(data))
-                resp, _ := http.ReadResponse(reader, r)
-                body, _ := ioutil.ReadAll(resp.Body)
-                for k, _ := range resp.Header {
-                    w.Header().Set(k, resp.Header.Get(k))
-                }
-                w.Write(body)
-                return
-            }
-        }
-    })
-
-    ln, err := net.Listen("tcp", *clientAddr)
-
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    go func() {
-        for {
-            closeWriteChannel := make(chan bool)
-            con, err := ln.Accept()
-            log.Printf("A client connected: %+v", con)
-
-            if err != nil {
-                log.Fatal(err)
-            }
-
-            go func() {
-                log.Println("Reading goroutine created")
-                responseBytes := make([]byte, 1024)
-                for {
-                    n, err := con.Read(responseBytes)
-                    if err != nil {
-                        log.Printf("A client disconnected")
-                        con.Close()
-                        closeWriteChannel <- true
-                        return
-                    } else {
-                        responseBytes := responseBytes[:n]
-                        log.Printf("A client sent a reponse:\n%v", string(responseBytes))
-                        response <- responseBytes
-                    }
-                }
-            }()
-
-            go func() {
-                log.Println("Writing goroutine created")
-                for {
-                    select {
-                    case data := <-request:
-                        log.Printf("Incoming request:\n%s", string(data))
-                        con.Write(data)
-                    case <-closeWriteChannel:
-                        log.Printf("Stopped by a channel")
-                        return
-                    }
-                }
-            }()
-        }
-    }()
-    http.ListenAndServeTLS(*serverAddr, "server.pem", "key.pem", r)
+type client struct {
+	conn     net.Conn
+	request  chan []byte
+	response chan []byte
+	channel  chan bool
 }
 
+var clients map[string]*client
+
+func init() {
+	clients = make(map[string]*client)
+}
+
+func randStr() string {
+	letter := []rune("abcdefghijklmnopqrstuvwxyz1234567890")
+
+	b := make([]rune, 20)
+
+	for i := range b {
+		b[i] = letter[rand.Intn(len(letter))]
+	}
+
+	return string(b)
+}
+
+func main() {
+	clientAddr := flag.String("client", ":30303", "Client address")
+	serverAddr := flag.String("server", ":4444", "Server address")
+	flag.Parse()
+	r := mux.NewRouter()
+	s := r.Host("{subdomain:[a-z0-9]+}.test.loc").Subrouter()
+	s.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		vars := mux.Vars(r)
+		if cl, ok := clients[vars["subdomain"]]; ok {
+			dump, _ := httputil.DumpRequest(r, true)
+			go func() {
+				log.Println("Sending the request to the %v channel", vars["subdomain"])
+				cl.request <- dump
+			}()
+			for {
+				select {
+				case data := <-cl.response:
+					reader := bufio.NewReader(bytes.NewReader(data))
+					resp, _ := http.ReadResponse(reader, r)
+					body, _ := ioutil.ReadAll(resp.Body)
+					for k, _ := range resp.Header {
+						w.Header().Set(k, resp.Header.Get(k))
+					}
+					w.Write(body)
+					return
+				}
+			}
+		} else {
+			log.Printf("Client %v not found", vars["subdomain"])
+			w.Write([]byte("Client not found"))
+			return
+		}
+	})
+
+	ln, err := net.Listen("tcp", *clientAddr)
+
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	go func() {
+		for {
+			con, err := ln.Accept()
+			id := randStr()
+			log.Printf("A client connected: %v = %+v", id, con)
+
+			clients[id] = &client{
+				conn:     con,
+				request:  make(chan []byte),
+				response: make(chan []byte),
+				channel:  make(chan bool),
+			}
+
+			if err != nil {
+				log.Fatal(err)
+			}
+
+			go func(cl *client, id string) {
+				log.Println("Reading goroutine created")
+				responseBytes := make([]byte, 1024)
+				for {
+					n, err := cl.conn.Read(responseBytes)
+					if err != nil {
+						log.Printf("The client %v disconnected", id)
+						cl.conn.Close()
+						cl.channel <- true
+						delete(clients, id)
+						return
+					} else {
+						responseBytes := responseBytes[:n]
+						log.Printf("A client sent a reponse:\n%v", string(responseBytes))
+						cl.response <- responseBytes
+					}
+				}
+			}(clients[id], id)
+
+			go func(cl *client, id string) {
+				log.Println("Writing goroutine created")
+				cl.conn.Write([]byte(fmt.Sprintf("~!@=%v=@!~", id)))
+				for {
+					select {
+					case data := <-cl.request:
+						log.Printf("Incoming request:\n%s", string(data))
+						con.Write(data)
+					case <-cl.channel:
+						log.Printf("Stopped by the %v channel", id)
+						return
+					}
+				}
+			}(clients[id], id)
+		}
+	}()
+	http.ListenAndServe(*serverAddr, r)
+}
