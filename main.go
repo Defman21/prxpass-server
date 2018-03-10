@@ -127,6 +127,7 @@ func main() {
 								clients[cidi] = cl
 								log.Printf("Changed %v to %v", id, cidi)
 								cl.changeID <- cidi
+								id = cidi
 							} else {
 								log.Printf("Change request rejected")
 							}
@@ -153,6 +154,7 @@ func main() {
 						delete(clients, id)
 						log.Printf("Removed %v (replaced with custom ID)", id)
 						cl.conn.Write([]byte(fmt.Sprintf("~!@=%v=@!~", newID)))
+						id = newID
 					}
 				}
 			}(clients[id], id)
