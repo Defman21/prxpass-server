@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httputil"
+	"time"
 )
 
 type client struct {
@@ -24,6 +25,7 @@ type client struct {
 var clients map[string]*client
 
 func init() {
+	rand.Seed(time.Now().UTC().UnixNano())
 	clients = make(map[string]*client)
 }
 
@@ -54,7 +56,7 @@ func main() {
 		if cl, ok := clients[vars["subdomain"]]; ok {
 			dump, _ := httputil.DumpRequest(r, true)
 			go func() {
-				log.Println("Sending the request to the %v channel", vars["subdomain"])
+				log.Printf("Sending the request to the %v channel", vars["subdomain"])
 				cl.request <- dump
 			}()
 			for {
