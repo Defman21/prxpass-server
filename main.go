@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"time"
+	"regexp"
 )
 
 type client struct {
@@ -20,6 +21,7 @@ type client struct {
 	request  chan []byte
 	response chan []byte
 	channel  chan bool
+	changeID chan string
 }
 
 var clients map[string]*client
@@ -48,6 +50,7 @@ func main() {
 	cert := flag.String("cert", "cert.pem", "Path to the cert file (https = true)")
 	key := flag.String("key", "key.pem", "Path to the private key (https = true)")
 	host := flag.String("host", "test.loc", "Hostname for the clients")
+	customIDs := flag.Bool("customid", false, "Allow clients to specify custom IDs")
 	flag.Parse()
 	r := mux.NewRouter()
 	s := r.Host(fmt.Sprintf("{subdomain:[a-z0-9]+}.%v", *host)).Subrouter()
@@ -79,7 +82,7 @@ func main() {
 			return
 		}
 	})
-
+	customIDRegex, _ := regexp.Compile("^~!@=([a-z0-9]+)=@!~$")
 	ln, err := net.Listen("tcp", *clientAddr)
 
 	if err != nil {
@@ -97,6 +100,7 @@ func main() {
 				request:  make(chan []byte),
 				response: make(chan []byte),
 				channel:  make(chan bool),
+				changeID: make(chan string),
 			}
 
 			if err != nil {
@@ -116,6 +120,18 @@ func main() {
 						return
 					} else {
 						responseBytes := responseBytes[:n]
+						if cid := customIDRegex.FindSubmatch(responseBytes); cid != nil {
+							cidi := string(cid[1])
+							log.Printf("A client requested a custom ID: %v", cidi)
+							if *customIDs {
+								clients[cidi] = cl
+								log.Printf("Changed %v to %v", id, cidi)
+								cl.changeID <- cidi
+							} else {
+								log.Printf("Change request rejected")
+							}
+							continue
+						}
 						log.Printf("A client sent a reponse:\n%v", string(responseBytes))
 						cl.response <- responseBytes
 					}
@@ -133,6 +149,10 @@ func main() {
 					case <-cl.channel:
 						log.Printf("Stopped by the %v channel", id)
 						return
+					case newID := <-cl.changeID:
+						delete(clients, id)
+						log.Printf("Removed %v (replaced with custom ID)", id)
+						cl.conn.Write([]byte(fmt.Sprintf("~!@=%v=@!~", newID)))
 					}
 				}
 			}(clients[id], id)
