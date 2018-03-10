@@ -42,6 +42,9 @@ func randStr() string {
 func main() {
 	clientAddr := flag.String("client", ":30303", "Client address")
 	serverAddr := flag.String("server", ":4444", "Server address")
+	useHTTPS := flag.Bool("https", false, "Use HTTPS")
+	cert := flag.String("cert", "cert.pem", "Path to the cert file (https = true)")
+	key := flag.String("key", "key.pem", "Path to the private key (https = true)")
 	flag.Parse()
 	r := mux.NewRouter()
 	s := r.Host("{subdomain:[a-z0-9]+}.test.loc").Subrouter()
@@ -131,5 +134,11 @@ func main() {
 			}(clients[id], id)
 		}
 	}()
-	http.ListenAndServe(*serverAddr, r)
+	if *useHTTPS {
+		log.Printf("Listening at: https://%v", *serverAddr)
+		http.ListenAndServeTLS(*serverAddr, *cert, *key, r)
+	} else {
+		log.Printf("Listening at: http://%v", *serverAddr)
+		http.ListenAndServe(*serverAddr, r)
+	}
 }
