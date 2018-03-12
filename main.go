@@ -6,7 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"github.com/gorilla/mux"
-	"github.com/mattn/go-colorable"
+	"github.com/shiena/ansicolor"
 	"github.com/sirupsen/logrus"
 	"github.com/vmihailenco/msgpack"
 	"io/ioutil"
@@ -15,11 +15,12 @@ import (
 	"net"
 	"net/http"
 	"net/http/httputil"
+	"os"
 	"time"
 )
 
 func init() {
-	logrus.SetOutput(colorable.NewColorableStdout())
+	logrus.SetOutput(ansicolor.NewAnsiColorWriter(os.Stdout))
 	logrus.SetFormatter(&logrus.TextFormatter{ForceColors: true})
 }
 
