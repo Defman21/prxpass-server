@@ -135,12 +135,12 @@ func randStr() string {
 }
 
 func main() {
-	clientAddr := flag.String("client", ":30303", "Client address")
-	serverAddr := flag.String("server", ":4444", "Server address")
+	clientAddr := flag.String("client", ":30303", "Binding address for the client server")
+	serverAddr := flag.String("server", ":4444", "Binding address for the http server")
 	useHTTPS := flag.Bool("https", false, "Use HTTPS")
-	cert := flag.String("cert", "cert.pem", "Path to the cert file (https = true)")
-	key := flag.String("key", "key.pem", "Path to the private key (https = true)")
-	host := flag.String("host", "test.loc", "Hostname for the clients")
+	cert := flag.String("cert", "cert.pem", "Path to the cert file")
+	key := flag.String("key", "key.pem", "Path to the private key")
+	host := flag.String("host", "test.loc", "Hostname of the http server")
 	customIDs := flag.Bool("customid", false, "Allow clients to specify custom IDs")
 
 	flag.Parse()
