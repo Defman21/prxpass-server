@@ -24,7 +24,7 @@
 #   go-tests = true
 #   unused-packages = true
 
-ignored = ["google.golang.org/appengine"]
+ignored = ["google.golang.org/appengine*"]
 
 [[constraint]]
   name = "github.com/gorilla/mux"
