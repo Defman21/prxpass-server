@@ -21,13 +21,13 @@ prxpass-server -client 0.0.0.0:8080 -server 0.0.0.0:443 -https -cert cert.pem -k
 
 ## Options
 
-* `-client <string>` - Address for the client connection handler. (e.g. `0.0.0.0:8080`)
-* `-server <string>` - Address of the web-server. (e.g. `0.0.0.0:80` or `0.0.0.0:443`)
-* `-host <string>` - Hostname of your server. (e.g. `defman.me`)
-* `-https <bool>` - Enable or disable HTTPS.
-* `-cert <string>` - Path to the certificate file. (e.g. `./cert.pem`)
-* `-key <string>` - Path to the private key file. (e.g. `./key.pem`)
-* `-customid <bool>` - Allow clients to specify their IDs instead of the generated ones.
+* `-client <string>` - Binding address for the client serve. (`localhost:30303`)
+* `-server <string>` - Binding address for the http server (`localhost:4444`)
+* `-host <string>` - Hostname of the http server (`test.loc`)
+* `-https <bool>` - Use HTTPS
+* `-cert <string>` - Path to the cert file (`cert.pem`)
+* `-key <string>` - Path to the private key (`key.pem`)
+* `-customid <bool>` - Allow clients to specify custom IDs
 
 See [prxpass-client](//github.com/Defman21/prxpass-client) for information about connecting to the server.
 
