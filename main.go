@@ -141,6 +141,7 @@ func main() {
 	cert := flag.String("cert", "cert.pem", "Path to the cert file")
 	key := flag.String("key", "key.pem", "Path to the private key")
 	host := flag.String("host", "test.loc", "Hostname of the http server")
+	password := flag.String("password", "", "Require the password from clients")
 	customIDs := flag.Bool("customid", false, "Allow clients to specify custom IDs")
 
 	flag.Parse()
@@ -221,6 +222,26 @@ func main() {
 								"args":   msgObj.RPC.Args,
 							}).Info("RPC")
 							cid := msgObj.RPC.Args[0]
+							if *password != "" {
+								upass := msgObj.RPC.Args[1]
+								if upass != *password {
+									logrus.WithFields(logrus.Fields{
+										"password":        *password,
+										"client_password": upass,
+									}).Warn("Password mismatch")
+									msgBytes, _ := msgpack.Marshal(&message{
+										Sender:  "server",
+										Version: 1,
+										RPC: rpcCall{
+											Method: "net/auth-reject",
+											Args:   []string{"Password mismatch"},
+										},
+									})
+									con.Write(formatMessage(msgBytes))
+									con.Close()
+									return
+								}
+							}
 							if *customIDs {
 								if _, exists := clients[cid]; exists {
 									logrus.WithFields(logrus.Fields{
