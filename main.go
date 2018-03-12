@@ -6,6 +6,9 @@ import (
 	"flag"
 	"fmt"
 	"github.com/gorilla/mux"
+	"github.com/mattn/go-colorable"
+	"github.com/sirupsen/logrus"
+	"github.com/vmihailenco/msgpack"
 	"io/ioutil"
 	"log"
 	"math/rand"
@@ -13,15 +16,83 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"time"
-	"regexp"
 )
+
+func init() {
+	logrus.SetOutput(colorable.NewColorableStdout())
+	logrus.SetFormatter(&logrus.TextFormatter{ForceColors: true})
+}
 
 type client struct {
 	conn     net.Conn
 	request  chan []byte
 	response chan []byte
-	channel  chan bool
-	changeID chan string
+	close    chan bool
+}
+
+func (c *client) writer(id string) {
+	msgBytes, err := msgpack.Marshal(&message{
+		Sender:  "server",
+		Version: 1,
+		RPC: rpcCall{
+			Method: "net/notify",
+			Args:   []string{id},
+		},
+	})
+
+	if err != nil {
+		logrus.WithFields(logrus.Fields{
+			"err": err,
+			"id":  id,
+		}).Warn("msgpack.Marshal error")
+		return
+	}
+
+	logrus.WithFields(logrus.Fields{
+		"id":     id,
+		"method": "net/notify",
+		"args":   []string{id},
+	}).Info("RPC")
+	c.conn.Write(formatMessage(msgBytes))
+
+	for {
+		select {
+		case httpRequest := <-c.request:
+			logrus.WithFields(logrus.Fields{
+				"id": id,
+			}).Info("HTTP request")
+			msgBytes, _ := msgpack.Marshal(&message{
+				Sender:  "server",
+				Version: 1,
+				RPC: rpcCall{
+					Method: "tcp/request",
+					Args:   []string{string(httpRequest)},
+				},
+			})
+			logrus.WithFields(logrus.Fields{
+				"id":     id,
+				"method": "tcp/request",
+				"args":   []string{"HTTP Dump"},
+			}).Info("RPC")
+			c.conn.Write(formatMessage(msgBytes))
+		case <-c.close:
+			logrus.WithFields(logrus.Fields{
+				"id": id,
+			}).Info("Writter closed")
+			return
+		}
+	}
+}
+
+type rpcCall struct {
+	Method string
+	Args   []string
+}
+
+type message struct {
+	Sender  string
+	Version int
+	RPC     rpcCall
 }
 
 var clients map[string]*client
@@ -29,6 +100,25 @@ var clients map[string]*client
 func init() {
 	rand.Seed(time.Now().UTC().UnixNano())
 	clients = make(map[string]*client)
+}
+
+func formatMessage(msgpackBytes []byte) []byte {
+	return append([]byte("!msgpack:"), msgpackBytes...)
+}
+
+func parseMessage(msg []byte) (*message, bool, error) {
+	if bytes.HasPrefix(msg, []byte("!msgpack:")) {
+		var obj message
+		err := msgpack.Unmarshal(msg[9:], &obj)
+		if err != nil {
+			return nil, false, err
+		}
+		if obj.Version == 0 {
+			return nil, false, nil
+		}
+		return &obj, true, nil
+	}
+	return nil, false, nil
 }
 
 func randStr() string {
@@ -51,15 +141,17 @@ func main() {
 	key := flag.String("key", "key.pem", "Path to the private key (https = true)")
 	host := flag.String("host", "test.loc", "Hostname for the clients")
 	customIDs := flag.Bool("customid", false, "Allow clients to specify custom IDs")
+
 	flag.Parse()
+
 	r := mux.NewRouter()
 	s := r.Host(fmt.Sprintf("{subdomain:[a-z0-9]+}.%v", *host)).Subrouter()
+
 	s.HandleFunc("/{url:.*}", func(w http.ResponseWriter, r *http.Request) {
 		vars := mux.Vars(r)
 		if cl, ok := clients[vars["subdomain"]]; ok {
 			dump, _ := httputil.DumpRequest(r, true)
 			go func() {
-				log.Printf("Sending the request to the %v channel", vars["subdomain"])
 				cl.request <- dump
 			}()
 			for {
@@ -68,7 +160,7 @@ func main() {
 					reader := bufio.NewReader(bytes.NewReader(data))
 					resp, _ := http.ReadResponse(reader, r)
 					body, _ := ioutil.ReadAll(resp.Body)
-					for k, _ := range resp.Header {
+					for k := range resp.Header {
 						w.Header().Set(k, resp.Header.Get(k))
 					}
 					w.WriteHeader(resp.StatusCode)
@@ -77,12 +169,13 @@ func main() {
 				}
 			}
 		} else {
-			log.Printf("Client %v not found", vars["subdomain"])
+			logrus.WithFields(logrus.Fields{
+				"id": vars["subdomain"],
+			}).Warn("Client not found")
 			w.Write([]byte("Client not found"))
 			return
 		}
 	})
-	customIDRegex, _ := regexp.Compile("^~!@=([a-z0-9]+)=@!~$")
 	ln, err := net.Listen("tcp", *clientAddr)
 
 	if err != nil {
@@ -93,82 +186,96 @@ func main() {
 		for {
 			con, err := ln.Accept()
 			id := randStr()
-			log.Printf("A client connected: %v = %+v", id, con)
-
-			clients[id] = &client{
-				conn:     con,
-				request:  make(chan []byte),
-				response: make(chan []byte),
-				channel:  make(chan bool),
-				changeID: make(chan string),
-			}
+			logrus.WithFields(logrus.Fields{
+				"con": con,
+			}).Info("Client connected")
 
 			if err != nil {
 				log.Fatal(err)
 			}
 
-			go func(cl *client, id string) {
-				log.Println("Reading goroutine created")
+			go func(con net.Conn, id string) {
+				var cl *client
+				logrus.Info("Client goroutine created")
 				responseBytes := make([]byte, 1024)
 				for {
-					n, err := cl.conn.Read(responseBytes)
+					n, err := con.Read(responseBytes)
 					if err != nil {
-						log.Printf("The client %v disconnected", id)
-						cl.conn.Close()
-						cl.channel <- true
-						delete(clients, id)
-						return
-					} else {
-						responseBytes := responseBytes[:n]
-						if cid := customIDRegex.FindSubmatch(responseBytes); cid != nil {
-							cidi := string(cid[1])
-							log.Printf("A client requested a custom ID: %v", cidi)
-							if *customIDs {
-								if _, exists := clients[cidi]; exists {
-									log.Printf("Change request rejected (already in use)")
-									continue
-								}
-								clients[cidi] = cl
-								log.Printf("Changed %v to %v", id, cidi)
-								cl.changeID <- cidi
-								id = cidi
-							} else {
-								log.Printf("Change request rejected")
-							}
-							continue
+						logrus.WithFields(logrus.Fields{
+							"id": id,
+						}).Info("Client disconnected")
+						con.Close()
+						if cl != nil {
+							cl.close <- true
+							delete(clients, id)
 						}
-						log.Printf("A client sent a reponse:\n%v", string(responseBytes))
-						cl.response <- responseBytes
-					}
-				}
-			}(clients[id], id)
-
-			go func(cl *client, id string) {
-				log.Println("Writing goroutine created")
-				cl.conn.Write([]byte(fmt.Sprintf("~!@=%v=@!~", id)))
-				for {
-					select {
-					case data := <-cl.request:
-						log.Printf("Incoming request:\n%s", string(data))
-						con.Write(data)
-					case <-cl.channel:
-						log.Printf("Stopped by the %v channel", id)
 						return
-					case newID := <-cl.changeID:
-						delete(clients, id)
-						log.Printf("Removed %v (replaced with custom ID)", id)
-						cl.conn.Write([]byte(fmt.Sprintf("~!@=%v=@!~", newID)))
-						id = newID
+					}
+					if msgObj, isMsgpack, _ := parseMessage(responseBytes[:n]); isMsgpack {
+						switch msgObj.RPC.Method {
+						case "net/register":
+							logrus.WithFields(logrus.Fields{
+								"con":    con,
+								"method": "net/register",
+								"args":   msgObj.RPC.Args,
+							}).Info("RPC")
+							cid := msgObj.RPC.Args[0]
+							if *customIDs {
+								if _, exists := clients[cid]; exists {
+									logrus.WithFields(logrus.Fields{
+										"id":     id,
+										"reason": "in use",
+									}).Warn("Custom ID request rejected")
+								} else {
+									logrus.WithFields(logrus.Fields{
+										"oldId": id,
+										"newId": cid,
+									}).Info("Custom ID request accepted")
+									id = cid
+								}
+							} else {
+								logrus.Warn("Custom IDs are disabled")
+							}
+							clients[id] = &client{
+								conn:     con,
+								request:  make(chan []byte),
+								response: make(chan []byte),
+								close:    make(chan bool),
+							}
+							cl = clients[id]
+							logrus.WithFields(logrus.Fields{
+								"id": id,
+							}).Info("Registered a client")
+							go cl.writer(id)
+						case "tcp/response":
+							logrus.WithFields(logrus.Fields{
+								"id":     id,
+								"method": "tcp/response",
+								"args":   []string{"HTTP Dump"},
+							}).Info("RPC")
+							response := msgObj.RPC.Args[0]
+							cl.response <- []byte(response)
+						}
 					}
 				}
-			}(clients[id], id)
+			}(con, id)
 		}
 	}()
 	if *useHTTPS {
-		log.Printf("Listening at: https://%v (%v)", *host, *serverAddr)
+		logrus.WithFields(logrus.Fields{
+			"https":  *useHTTPS,
+			"server": *serverAddr,
+			"host":   *host,
+			"cert":   *cert,
+			"key":    *key,
+		}).Info("Listening")
 		http.ListenAndServeTLS(*serverAddr, *cert, *key, r)
 	} else {
-		log.Printf("Listening at: http://%v (%v)", *host, *serverAddr)
+		logrus.WithFields(logrus.Fields{
+			"https":  *useHTTPS,
+			"server": *serverAddr,
+			"host":   *host,
+		}).Info("Listening")
 		http.ListenAndServe(*serverAddr, r)
 	}
 }
