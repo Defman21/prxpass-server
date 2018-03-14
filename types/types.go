@@ -204,7 +204,6 @@ func (c *Client) Reader(clients Clients, id string, customIDs bool, password str
 				logrus.WithFields(logrus.Fields{
 					"id":     id,
 					"method": "tcp/response",
-					"args":   []string{"TCP Dump"},
 				}).Info("RPC")
 				responseStr := msgObj.RPC.Args[0]
 				c.Response <- &Response{Type: "tcp", Data: []byte(responseStr)}
@@ -212,7 +211,6 @@ func (c *Client) Reader(clients Clients, id string, customIDs bool, password str
 				logrus.WithFields(logrus.Fields{
 					"id":     id,
 					"method": "http/response",
-					"args":   []string{"HTTP Dump"},
 				}).Info("RPC")
 				responseStr := msgObj.RPC.Args[0]
 				c.Response <- &Response{Type: "http", Data: []byte(responseStr)}
