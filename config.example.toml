@@ -1,0 +1,14 @@
+[http]
+    client = "0.0.0.0:8000"
+    server = "0.0.0.0:80"
+    host = "test.loc"
+    custom_ids = true
+    password = "mysecret"
+    [http.tls]
+        enabled = false
+        cert = ""
+        key = ""
+[tcp]
+    client = ""
+    server = ""
+    password = "mysecret"

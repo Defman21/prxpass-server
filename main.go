@@ -2,6 +2,8 @@ package main
 
 import (
 	"flag"
+	"fmt"
+	"github.com/BurntSushi/toml"
 	handlerHTTP "github.com/Defman21/prxpass-server/handlers/http"
 	"github.com/Defman21/prxpass-server/helpers"
 	"github.com/Defman21/prxpass-server/types"
@@ -13,9 +15,46 @@ import (
 	"time"
 )
 
+type httpConfig struct {
+	Client    string
+	Server    string
+	Host      string
+	CustomIDs bool `toml:"custom_ids"`
+	TLS       httpTLSConfig
+	Password  string
+}
+
+type httpTLSConfig struct {
+	Enabled bool
+	Cert    string
+	Key     string
+}
+
+type tcpConfig struct {
+	Client   string
+	Server   string
+	Password string
+}
+
+type config struct {
+	HTTP httpConfig `toml:"http"`
+	TCP  tcpConfig  `toml:"tcp"`
+}
+
 func init() {
 	logrus.SetOutput(ansicolor.NewAnsiColorWriter(os.Stdout))
 	logrus.SetFormatter(&logrus.TextFormatter{ForceColors: true})
+}
+
+var conf config
+
+func init() {
+	if _, err := toml.DecodeFile("./config.toml", &conf); err != nil {
+		logrus.Fatal(err)
+	}
+	logrus.WithFields(logrus.Fields{
+		"conf": fmt.Sprintf("%+v", conf),
+	}).Info("Config")
 }
 
 var clients types.Clients
@@ -26,18 +65,21 @@ func init() {
 }
 
 func main() {
-	clientAddr := flag.String("client", ":30303", "Binding address for the client server")
-	serverAddr := flag.String("server", ":4444", "Binding address for the http server")
-	useHTTPS := flag.Bool("https", false, "Use HTTPS")
-	cert := flag.String("cert", "cert.pem", "Path to the cert file")
-	key := flag.String("key", "key.pem", "Path to the private key")
-	host := flag.String("host", "test.loc", "Hostname of the http server")
-	password := flag.String("password", "", "Require the password from clients")
-	customIDs := flag.Bool("customid", false, "Allow clients to specify custom IDs")
+	isHTTP := flag.Bool("http", true, "Use HTTP")
+	isTCP := flag.Bool("tcp", false, "Use TCP")
+
+	var (
+		clientAddr string
+	)
+
+	if *isHTTP {
+		clientAddr = conf.HTTP.Client
+	} else if *isTCP {
+		clientAddr = conf.TCP.Client
+	}
 
 	flag.Parse()
-
-	ln, err := net.Listen("tcp", *clientAddr)
+	ln, err := net.Listen("tcp", clientAddr)
 
 	if err != nil {
 		logrus.Fatal(err)
@@ -56,9 +98,9 @@ func main() {
 			}
 
 			cl := types.NewClient(con)
-			go cl.Reader(clients, id, *customIDs, *password)
+			go cl.Reader(clients, id, conf.HTTP.CustomIDs, conf.HTTP.Password)
 		}
 	}()
 
-	handlerHTTP.Handle(clients, *useHTTPS, *serverAddr, *host, *cert, *key)
+	handlerHTTP.Handle(clients, conf.HTTP.TLS.Enabled, conf.HTTP.Server, conf.HTTP.Host, conf.HTTP.TLS.Cert, conf.HTTP.TLS.Key)
 }

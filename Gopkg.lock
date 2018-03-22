@@ -2,6 +2,12 @@
 
 
 [[projects]]
+  name = "github.com/BurntSushi/toml"
+  packages = ["."]
+  revision = "b26d9c308763d68093482582cea63d69be07a0f0"
+  version = "v0.3.0"
+
+[[projects]]
   name = "github.com/gorilla/context"
   packages = ["."]
   revision = "1ea25387ff6f684839d82767c1733ff4d4d15d0a"
@@ -52,6 +58,6 @@
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "05edb095f3ed07a5cbcde89b1a73bb58496bb4a314a564b6a211d26cb2c1809a"
+  inputs-digest = "1a8f5eff4c1af488617f30e56dbddabc636274831dcde8a0a28f1b84fc64a9ab"
   solver-name = "gps-cdcl"
   solver-version = 1
