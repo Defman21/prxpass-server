@@ -59,7 +59,7 @@ func (c *Client) Writer(id string) {
 	logrus.WithFields(logrus.Fields{
 		"id": id,
 	}).Info("Writing goroutine created")
-	msgBytes, err := CreateMsgpack(&Message{
+	msgBytes, err := NewMessage(&Message{
 		Sender:  "server",
 		Version: 1,
 		RPC: RPC{
@@ -72,7 +72,7 @@ func (c *Client) Writer(id string) {
 		logrus.WithFields(logrus.Fields{
 			"err": err,
 			"id":  id,
-		}).Warn("helpers.CreateMsgpack error")
+		}).Warn("helpers.NewMessage error")
 		return
 	}
 
@@ -91,7 +91,7 @@ func (c *Client) Writer(id string) {
 				"id":   id,
 				"type": reqChan.Type,
 			}).Info("Request")
-			msgBytes, err := CreateMsgpack(&Message{
+			msgBytes, err := NewMessage(&Message{
 				Sender:  "server",
 				Version: 1,
 				RPC: RPC{
@@ -103,7 +103,7 @@ func (c *Client) Writer(id string) {
 				logrus.WithFields(logrus.Fields{
 					"id":  id,
 					"err": err,
-				}).Warn("helpers.CreateMsgpack error")
+				}).Warn("helpers.NewMessage error")
 				continue
 			}
 			logrus.WithFields(logrus.Fields{
@@ -138,12 +138,12 @@ func (c *Client) Reader(clients Clients, id string, customIDs bool, password str
 			c.Close <- true
 			return
 		}
-		msgObj, isMsgpack, err := ParseMsgpack(responseBytes[:n])
+		msgObj, isMsgpack, err := ParseMessage(responseBytes[:n])
 		if err != nil {
 			logrus.WithFields(logrus.Fields{
 				"id":  id,
 				"err": err,
-			}).Warn("ParseMsgpack failed")
+			}).Warn("ParseMessage failed")
 			continue
 		}
 		if isMsgpack {
@@ -162,7 +162,7 @@ func (c *Client) Reader(clients Clients, id string, customIDs bool, password str
 							"password":        password,
 							"client_password": upass,
 						}).Warn("Password mismatch")
-						msgBytes, _ := CreateMsgpack(&Message{
+						msgBytes, _ := NewMessage(&Message{
 							Sender:  "server",
 							Version: 1,
 							RPC: RPC{
@@ -219,8 +219,8 @@ func (c *Client) Reader(clients Clients, id string, customIDs bool, password str
 	}
 }
 
-// CreateMsgpack create a msgpack message
-func CreateMsgpack(obj *Message) ([]byte, error) {
+// NewMessage create a msgpack message
+func NewMessage(obj *Message) ([]byte, error) {
 	msgpBytes, err := msgpack.Marshal(obj)
 	if err != nil {
 		return nil, err
@@ -228,8 +228,8 @@ func CreateMsgpack(obj *Message) ([]byte, error) {
 	return append([]byte("!msgpack:"), msgpBytes...), nil
 }
 
-// ParseMsgpack parse a msgpack message
-func ParseMsgpack(msg []byte) (*Message, bool, error) {
+// ParseMessage parse a msgpack message
+func ParseMessage(msg []byte) (*Message, bool, error) {
 	if bytes.HasPrefix(msg, []byte("!msgpack:")) {
 		var obj Message
 		err := msgpack.Unmarshal(msg[9:], &obj)
