@@ -3,9 +3,10 @@ package types
 import (
 	"bytes"
 	"fmt"
-	"github.com/sirupsen/logrus"
-	"github.com/vmihailenco/msgpack"
 	"net"
+
+	"github.com/Defman21/prxpass-server/common"
+	"github.com/vmihailenco/msgpack"
 )
 
 // RPC an RPC call
@@ -55,42 +56,43 @@ type Response struct {
 }
 
 // Writer a writing goroutine
-func (c *Client) Writer(id string) {
-	logrus.WithFields(logrus.Fields{
-		"id": id,
-	}).Info("Writing goroutine created")
+func (c *Client) Writer(id string, config *HTTPConfig) {
+	common.Logger.Infow("Writing goroutine created",
+		"id", id,
+	)
+	url := fmt.Sprintf("http://%s.%s:%d/", id, config.Host, config.ServerPort)
 	msgBytes, err := NewMessage(&Message{
 		Sender:  "server",
 		Version: 1,
 		RPC: RPC{
 			Method: "net/notify",
-			Args:   []string{id},
+			Args:   []string{id, url},
 		},
 	})
 
 	if err != nil {
-		logrus.WithFields(logrus.Fields{
-			"err": err,
-			"id":  id,
-		}).Warn("helpers.NewMessage error")
+		common.Logger.Warnw("helpers.NewMessage error",
+			"err", err,
+			"id", id,
+		)
 		return
 	}
 
-	logrus.WithFields(logrus.Fields{
-		"id":     id,
-		"method": "net/notify",
-		"args":   []string{id},
-	}).Info("RPC")
+	common.Logger.Infow("RPC",
+		"id", id,
+		"method", "net/notify",
+		"args", []string{id, url},
+	)
 
 	c.Conn.Write(msgBytes)
 
 	for {
 		select {
 		case reqChan := <-c.Request:
-			logrus.WithFields(logrus.Fields{
-				"id":   id,
-				"type": reqChan.Type,
-			}).Info("Request")
+			common.Logger.Infow("Info",
+				"id", id,
+				"type", reqChan.Type,
+			)
 			msgBytes, err := NewMessage(&Message{
 				Sender:  "server",
 				Version: 1,
@@ -100,68 +102,71 @@ func (c *Client) Writer(id string) {
 				},
 			})
 			if err != nil {
-				logrus.WithFields(logrus.Fields{
-					"id":  id,
-					"err": err,
-				}).Warn("helpers.NewMessage error")
+				common.Logger.Warnw("helpers.NewMessage error",
+					"id", id,
+					"err", err,
+				)
 				continue
 			}
-			logrus.WithFields(logrus.Fields{
-				"id":     id,
-				"method": fmt.Sprintf("%v/request", reqChan.Type),
-			}).Info("RPC")
+			common.Logger.Infow("RPC",
+				"id", id,
+				"method", fmt.Sprintf("%v/request", reqChan.Type),
+			)
 			c.Conn.Write(msgBytes)
 		case <-c.Close:
-			logrus.WithFields(logrus.Fields{
-				"id":     id,
-				"reason": "closed",
-			}).Warn("Writing goroutine destroyed")
+			common.Logger.Warnw("Writing goroutine destroyed",
+				"id", id,
+				"reason", "closed",
+			)
 			return
 		}
 	}
 }
 
 // Reader reading goroutine
-func (c *Client) Reader(clients Clients, id string, customIDs bool, password string) {
-	logrus.WithFields(logrus.Fields{
-		"id": id,
-	}).Info("Reading goroutine created")
+func (c *Client) Reader(clients *Clients, id string, config *HTTPConfig) {
+	password := config.Password
+	customIDs := config.CustomIDs
+	common.Logger.Infow("Reading goroutine created",
+		"id", id,
+	)
 	responseBytes := make([]byte, 1024)
 	for {
 		n, err := c.Conn.Read(responseBytes)
 		if err != nil {
-			logrus.WithFields(logrus.Fields{
-				"id":     id,
-				"reason": err,
-			}).Warn("Reading goroutine destroyed")
+			common.Logger.Warnw("Reading goroutine destroyed",
+				"id", id,
+				"reason", err,
+			)
 			c.Conn.Close()
+			delete(*clients, id)
 			c.Close <- true
 			return
 		}
 		msgObj, isMsgpack, err := ParseMessage(responseBytes[:n])
 		if err != nil {
-			logrus.WithFields(logrus.Fields{
-				"id":  id,
-				"err": err,
-			}).Warn("ParseMessage failed")
+			common.Logger.Warnw("ParseMessage failed",
+				"id", id,
+				"err", err,
+			)
 			continue
 		}
 		if isMsgpack {
 			switch msgObj.RPC.Method {
 			case "net/register":
-				logrus.WithFields(logrus.Fields{
-					"con":    c.Conn,
-					"method": "net/register",
-					"args":   msgObj.RPC.Args,
-				}).Info("RPC")
+				common.Logger.Warnw("RPC",
+					"con", c.Conn,
+					"method", "net/register",
+					"args", msgObj.RPC.Args,
+				)
 				cid := msgObj.RPC.Args[0]
 				if password != "" {
 					upass := msgObj.RPC.Args[1]
 					if upass != password {
-						logrus.WithFields(logrus.Fields{
-							"password":        password,
-							"client_password": upass,
-						}).Warn("Password mismatch")
+						common.Logger.Warnw("Password mismatch",
+							"password", password,
+							"client_password", upass,
+						)
 						msgBytes, _ := NewMessage(&Message{
 							Sender:  "server",
 							Version: 1,
@@ -172,46 +177,46 @@ func (c *Client) Reader(clients Clients, id string, customIDs bool, password str
 						})
 						c.Conn.Write(msgBytes)
 						c.Conn.Close()
-						logrus.WithFields(logrus.Fields{
-							"id":     id,
-							"reason": "Password mismatch",
-						}).Warn("Writing goroutine destroyed")
+						common.Logger.Warnw("Writing goroutine destroyed",
+							"id", id,
+							"reason", "Password mismatch",
+						)
 						return
 					}
 				}
 				if customIDs {
-					if _, exists := clients[cid]; exists {
-						logrus.WithFields(logrus.Fields{
-							"id":     id,
-							"reason": "in use",
-						}).Warn("Custom ID request rejected")
+					if _, exists := (*clients)[cid]; exists {
+						common.Logger.Warnw("Custom ID request rejected",
+							"id", id,
+							"reason", "in use",
+						)
 					} else {
-						logrus.WithFields(logrus.Fields{
-							"oldId": id,
-							"newId": cid,
-						}).Info("Custom ID request accepted")
+						common.Logger.Infow("Custom ID request accepted",
+							"oldId", id,
+							"newId", cid,
+						)
 						id = cid
 					}
 				} else {
-					logrus.Warn("Custom IDs are disabled")
+					common.Logger.Warn("Custom IDs are disabled")
 				}
-				clients[id] = c
-				logrus.WithFields(logrus.Fields{
-					"id": id,
-				}).Info("Registered a client")
-				go c.Writer(id)
+				(*clients)[id] = c
+				common.Logger.Infow("Registered a client",
+					"id", id,
+				)
+				go c.Writer(id, config)
 			case "tcp/response":
-				logrus.WithFields(logrus.Fields{
-					"id":     id,
-					"method": "tcp/response",
-				}).Info("RPC")
+				common.Logger.Infow("RPC",
+					"id", id,
+					"method", "tcp/response",
+				)
 				responseStr := msgObj.RPC.Args[0]
 				c.Response <- &Response{Type: "tcp", Data: []byte(responseStr)}
 			case "http/response":
-				logrus.WithFields(logrus.Fields{
-					"id":     id,
-					"method": "http/response",
-				}).Info("RPC")
+				common.Logger.Infow("RPC",
+					"id", id,
+					"method", "http/response",
+				)
 				responseStr := msgObj.RPC.Args[0]
 				c.Response <- &Response{Type: "http", Data: []byte(responseStr)}
 			}

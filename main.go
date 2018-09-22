@@ -3,58 +3,26 @@ package main
 import (
 	"flag"
 	"fmt"
+	"math/rand"
+	"net"
+	"time"
+
 	"github.com/BurntSushi/toml"
+	"github.com/Defman21/prxpass-server/common"
 	handlerHTTP "github.com/Defman21/prxpass-server/handlers/http"
 	"github.com/Defman21/prxpass-server/helpers"
 	"github.com/Defman21/prxpass-server/types"
-	"github.com/shiena/ansicolor"
-	"github.com/sirupsen/logrus"
-	"math/rand"
-	"net"
-	"os"
-	"time"
 )
 
-type httpConfig struct {
-	Client    string
-	Server    string
-	Host      string
-	CustomIDs bool `toml:"custom_ids"`
-	TLS       httpTLSConfig
-	Password  string
-}
-
-type httpTLSConfig struct {
-	Enabled bool
-	Cert    string
-	Key     string
-}
-
-type tcpConfig struct {
-	Client   string
-	Server   string
-	Password string
-}
-
-type config struct {
-	HTTP httpConfig `toml:"http"`
-	TCP  tcpConfig  `toml:"tcp"`
-}
-
-func init() {
-	logrus.SetOutput(ansicolor.NewAnsiColorWriter(os.Stdout))
-	logrus.SetFormatter(&logrus.TextFormatter{ForceColors: true})
-}
-
-var conf config
+var conf types.Config
 
 func init() {
 	if _, err := toml.DecodeFile("./config.toml", &conf); err != nil {
-		logrus.Fatal(err)
+		common.Logger.Fatal(err)
 	}
-	logrus.WithFields(logrus.Fields{
-		"conf": fmt.Sprintf("%+v", conf),
-	}).Info("Config")
+	common.Logger.Infow("Config",
+		"config", fmt.Sprintf("%+v", conf),
+	)
 }
 
 var clients types.Clients
@@ -69,38 +37,47 @@ func main() {
 	isTCP := flag.Bool("tcp", false, "Use TCP")
 
 	var (
-		clientAddr string
+		serverAddress string
+		clientAddress string
 	)
 
 	if *isHTTP {
-		clientAddr = conf.HTTP.Client
+		clientAddr := conf.HTTP.ClientAddr
+		clientPort := conf.HTTP.ClientPort
+		clientAddress = fmt.Sprintf("%s:%d", clientAddr, clientPort)
+
 	} else if *isTCP {
-		clientAddr = conf.TCP.Client
+		clientAddress = conf.TCP.Client
 	}
 
 	flag.Parse()
-	ln, err := net.Listen("tcp", clientAddr)
+	ln, err := net.Listen("tcp", clientAddress)
+	common.Logger.Infow("Listening [clients]",
+		"address", clientAddress,
+	)
 
 	if err != nil {
-		logrus.Fatal(err)
+		common.Logger.Fatal(err)
 	}
 
 	go func() {
 		for {
 			con, err := ln.Accept()
 			id := helpers.ID()
-			logrus.WithFields(logrus.Fields{
-				"con": con,
-			}).Info("Client connected")
+			common.Logger.Infow("Client connected",
+				"con", con,
+			)
 
 			if err != nil {
-				logrus.Fatal(err)
+				common.Logger.Fatal(err)
 			}
 
 			cl := types.NewClient(con)
-			go cl.Reader(clients, id, conf.HTTP.CustomIDs, conf.HTTP.Password)
+			go cl.Reader(&clients, id, &conf.HTTP)
 		}
 	}()
 
-	handlerHTTP.Handle(clients, conf.HTTP.TLS.Enabled, conf.HTTP.Server, conf.HTTP.Host, conf.HTTP.TLS.Cert, conf.HTTP.TLS.Key)
+	serverAddress = fmt.Sprintf("%s:%d", conf.HTTP.ServerAddr, conf.HTTP.ServerPort)
+
+	handlerHTTP.Handle(&clients, conf.HTTP.TLS.Enabled, serverAddress, conf.HTTP.Host, conf.HTTP.TLS.Cert, conf.HTTP.TLS.Key)
 }
